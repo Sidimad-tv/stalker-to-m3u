@@ -180,11 +180,16 @@ def create_link(base, mac, token, cmd):
             if link.startswith("http://localhost") or link.startswith("https://localhost"):
                 # Replace localhost with the actual portal host
                 parsed_base = urllib.parse.urlparse(base)
-                link = link.replace("localhost", parsed_base.netloc.split(':')[0])
+                host = parsed_base.netloc.split(':')[0]
+                link = link.replace("localhost", host)
             elif link.startswith("/"):
                 # Relative URL - prepend base
                 parsed_base = urllib.parse.urlparse(base)
                 link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
+            # Append token as query parameter if not already present
+            if token and "token=" not in link.lower():
+                separator = "&" if "?" in link else "?"
+                link = f"{link}{separator}token={token}"
         return link
     except Exception:
         return ""

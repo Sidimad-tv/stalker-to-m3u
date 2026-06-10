@@ -318,7 +318,13 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_m3u(self, content):
+    def send_m3u(self, content, base=""):
+        # Final safety net: replace all localhost URLs with actual host
+        if base and "localhost" in content.lower():
+            parsed_base = urllib.parse.urlparse(base)
+            host = parsed_base.netloc.split(':')[0]
+            content = content.replace("localhost", host)
+        
         body = content.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/x-mpegurl; charset=utf-8")
@@ -395,7 +401,7 @@ class handler(BaseHTTPRequestHandler):
                     errors.append(f"{t}: {e}")
             if not all_channels and errors:
                 return self.send_json(502, {"error": "No channels fetched", "details": errors})
-            return self.send_m3u(build_m3u(all_channels, epg_url, portal))
+            return self.send_m3u(build_m3u(all_channels, epg_url, portal), portal)
 
         # ── format=json  (NDJSON streaming) ───────────────────────────────────
         self.start_ndjson()

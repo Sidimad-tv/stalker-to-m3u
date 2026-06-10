@@ -196,11 +196,19 @@ def fetch_all_channels(session, base, mac, token, media_type,
             break
     return channels
 
-def build_m3u(channels, epg_url=""):
+def build_m3u(channels, epg_url="", base=""):
     lines = [f'#EXTM3U url-tvg="{epg_url}"' if epg_url else "#EXTM3U"]
     for ch in channels:
         if not ch.get("stream_url"):
             continue
+        url = ch["stream_url"]
+        
+        # Fix localhost URLs in the final output
+        if base and "localhost" in url.lower():
+            parsed_base = urlparse(base)
+            host = parsed_base.netloc.split(':')[0]
+            url = url.replace("localhost", host)
+        
         name = (ch["name"] or "Unknown").replace('"', '&quot;').replace(',', '&#44;')
         logo = ch.get("logo", "")
         group = ch.get("group", "Uncategorized").replace('"', '&quot;')
@@ -219,7 +227,7 @@ def build_m3u(channels, epg_url=""):
             attrs.append(f'tvg-chno="{number}"')
         
         lines.append(f'#EXTINF:-1 {",".join(attrs)},{name}')
-        lines.append(ch["stream_url"])
+        lines.append(url)
     return "\n".join(lines) + "\n"
 
 def run_conversion(portal, mac, types, max_pages, epg_url, timeout,
@@ -260,7 +268,7 @@ def run_conversion(portal, mac, types, max_pages, epg_url, timeout,
 
         valid = [c for c in all_channels if c.get("stream_url")]
         log_fn(f"\n✓ Done — {len(valid)} valid channels (of {len(all_channels)} total)")
-        done_fn(build_m3u(valid, epg_url), None)
+        done_fn(build_m3u(valid, epg_url, portal), None)
     except Exception as e:
         done_fn(None, str(e))
 

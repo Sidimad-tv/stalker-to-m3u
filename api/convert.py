@@ -261,12 +261,19 @@ def fetch_all(base, mac, token, media_type, max_pages=50, known_urls=None):
 
     return channels
 
-def build_m3u(channels, epg_url=""):
+def build_m3u(channels, epg_url="", base=""):
     lines = [f'#EXTM3U url-tvg="{epg_url}"' if epg_url else "#EXTM3U"]
     for ch in channels:
         url = ch.get("stream_url") or ch.get("raw_cmd") or ""
         if not url:
             continue
+        
+        # Fix localhost URLs in the final output
+        if base and "localhost" in url.lower():
+            parsed_base = urllib.parse.urlparse(base)
+            host = parsed_base.netloc.split(':')[0]
+            url = url.replace("localhost", host)
+        
         name  = ch["name"].replace('"', '&quot;').replace(',', '&#44;')
         logo  = ch.get("logo", "")
         group = ch.get("group", "Uncategorized").replace('"', '&quot;')
@@ -388,7 +395,7 @@ class handler(BaseHTTPRequestHandler):
                     errors.append(f"{t}: {e}")
             if not all_channels and errors:
                 return self.send_json(502, {"error": "No channels fetched", "details": errors})
-            return self.send_m3u(build_m3u(all_channels, epg_url))
+            return self.send_m3u(build_m3u(all_channels, epg_url, portal))
 
         # ── format=json  (NDJSON streaming) ───────────────────────────────────
         self.start_ndjson()

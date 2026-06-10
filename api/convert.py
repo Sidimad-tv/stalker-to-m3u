@@ -174,7 +174,18 @@ def create_link(base, mac, token, cmd):
                          cmd=urllib.parse.quote(cmd, safe=""),
                          JsHttpRequest=f"{int(time.time() * 1000)}-xml")
         raw = http_get(url, build_headers(mac, token)).get("js", {}).get("cmd", "")
-        return clean_cmd(raw)
+        link = clean_cmd(raw)
+        if link:
+            # Convert localhost/relative URLs to absolute URLs using base portal
+            if link.startswith("http://localhost") or link.startswith("https://localhost"):
+                # Replace localhost with the actual portal host
+                parsed_base = urllib.parse.urlparse(base)
+                link = link.replace("localhost", parsed_base.netloc.split(':')[0])
+            elif link.startswith("/"):
+                # Relative URL - prepend base
+                parsed_base = urllib.parse.urlparse(base)
+                link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
+        return link
     except Exception:
         return ""
 

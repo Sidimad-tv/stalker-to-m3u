@@ -119,6 +119,16 @@ def extract_stream_url(session, base, mac, token, cmd):
         r.raise_for_status()
         link = re.sub(r'^(ffmpeg|auto)\s+', '',
                       r.json().get("js", {}).get("cmd", "")).strip()
+        if link:
+            # Convert localhost/relative URLs to absolute URLs using base portal
+            if link.startswith("http://localhost") or link.startswith("https://localhost"):
+                # Replace localhost with the actual portal host
+                parsed_base = urlparse(base)
+                link = link.replace("localhost", parsed_base.netloc.split(':')[0])
+            elif link.startswith("/"):
+                # Relative URL - prepend base
+                parsed_base = urlparse(base)
+                link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
         return link or clean
     except Exception:
         return clean

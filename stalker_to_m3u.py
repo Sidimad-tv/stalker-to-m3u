@@ -63,6 +63,19 @@ def portal_url(base, action, **params):
     params["action"] = action
     return f"{base.rstrip('/')}/portal.php?{urlencode(params)}"
 
+def fix_localhost_url(url, base):
+    """Convert localhost URLs to absolute URLs using the base portal host."""
+    if not url or not base:
+        return url
+    if "localhost" in url.lower():
+        parsed_base = urlparse(base)
+        host = parsed_base.netloc.split(':')[0]
+        url = url.replace("localhost", host)
+    elif url.startswith("/"):
+        parsed_base = urlparse(base)
+        url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+    return url
+
 def handshake(session, base, mac):
     url = portal_url(base, "handshake", type="stb", prehash=0)
     r = session.get(url, headers=build_headers(mac), timeout=15)
@@ -107,10 +120,20 @@ def fetch_page(session, base, mac, token, media_type, page):
 
 def extract_stream_url(session, base, mac, token, cmd):
     if cmd.startswith(("http://", "https://", "rtsp://")):
-        return cmd
+        url = fix_localhost_url(cmd, base)
+        # Append token as query parameter if not already present
+        if token and "token=" not in url.lower():
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}token={token}"
+        return url
     clean = re.sub(r'^(ffmpeg|auto)\s+', '', cmd).strip()
     if clean.startswith(("http", "rtsp")):
-        return clean
+        url = fix_localhost_url(clean, base)
+        # Append token as query parameter if not already present
+        if token and "token=" not in url.lower():
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}token={token}"
+        return url
     try:
         url = portal_url(base, "create_link", type="itv",
                          cmd=requests.utils.quote(cmd),
@@ -120,16 +143,7 @@ def extract_stream_url(session, base, mac, token, cmd):
         link = re.sub(r'^(ffmpeg|auto)\s+', '',
                       r.json().get("js", {}).get("cmd", "")).strip()
         if link:
-            # Convert localhost/relative URLs to absolute URLs using base portal
-            if link.startswith("http://localhost") or link.startswith("https://localhost"):
-                # Replace localhost with the actual portal host
-                parsed_base = urlparse(base)
-                host = parsed_base.netloc.split(':')[0]
-                link = link.replace("localhost", host)
-            elif link.startswith("/"):
-                # Relative URL - prepend base
-                parsed_base = urlparse(base)
-                link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
+            link = fix_localhost_url(link, base)
             # Append token as query parameter if not already present
             if token and "token=" not in link.lower():
                 separator = "&" if "?" in link else "?"

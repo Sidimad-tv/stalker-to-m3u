@@ -63,6 +63,20 @@ def sanitize_url(url: str) -> str:
     return url
 
 
+def fix_localhost_url(url: str, base: str) -> str:
+    """Convert localhost URLs to absolute URLs using the base portal host."""
+    if not url or not base:
+        return url
+    if "localhost" in url.lower():
+        parsed_base = urllib.parse.urlparse(base)
+        host = parsed_base.netloc.split(':')[0]
+        url = url.replace("localhost", host)
+    elif url.startswith("/"):
+        parsed_base = urllib.parse.urlparse(base)
+        url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+    return url
+
+
 def is_uncheckable(url: str) -> bool:
     UNCHECKABLE_KEYWORDS = ['token', 'auth', 'login', 'key', 'signature', 'drm']
     if len(url) > 250:
@@ -143,16 +157,24 @@ def fetch_genres(base, mac, token, media_type):
     except Exception:
         return {}
 
-def clean_cmd(cmd):
+def clean_cmd(cmd, base=""):
     """Strip ffmpeg/auto prefix; return a plain URL or empty string."""
     if not cmd:
         return ""
     cmd = cmd.strip()
     if re.match(r'^https?://', cmd) or cmd.startswith("rtsp://"):
-        return sanitize_url(cmd)
+        url = sanitize_url(cmd)
+        return fix_localhost_url(url, base) if base else url
     m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+|rtsp://\S+)', cmd)
     if m:
-        return sanitize_url(m.group(1))
+        url = sanitize_url(m.group(1))
+        return fix_localhost_url(url, base) if base else url
+    # Check if cmd contains localhost URL
+    if "localhost" in cmd.lower():
+        m = re.search(r'(https?://localhost[^\s]+)', cmd)
+        if m:
+            url = sanitize_url(m.group(1))
+            return fix_localhost_url(url, base) if base else url
     return cmd
 
 def fetch_page(base, mac, token, media_type, page):
@@ -174,18 +196,8 @@ def create_link(base, mac, token, cmd):
                          cmd=urllib.parse.quote(cmd, safe=""),
                          JsHttpRequest=f"{int(time.time() * 1000)}-xml")
         raw = http_get(url, build_headers(mac, token)).get("js", {}).get("cmd", "")
-        link = clean_cmd(raw)
+        link = clean_cmd(raw, base)
         if link:
-            # Convert localhost/relative URLs to absolute URLs using base portal
-            if link.startswith("http://localhost") or link.startswith("https://localhost"):
-                # Replace localhost with the actual portal host
-                parsed_base = urllib.parse.urlparse(base)
-                host = parsed_base.netloc.split(':')[0]
-                link = link.replace("localhost", host)
-            elif link.startswith("/"):
-                # Relative URL - prepend base
-                parsed_base = urllib.parse.urlparse(base)
-                link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
             # Append token as query parameter if not already present
             if token and "token=" not in link.lower():
                 separator = "&" if "?" in link else "?"
@@ -200,7 +212,7 @@ def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback
     """
     genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
     raw_cmd  = ch.get("cmd") or ""
-    stream   = clean_cmd(raw_cmd)
+    stream   = clean_cmd(raw_cmd, base)
 
     if not stream and raw_cmd and media_type == "live":
         stream = create_link(base, mac, token, raw_cmd)

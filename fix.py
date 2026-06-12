@@ -2,7 +2,8 @@
 fix.py — Standalone Stalker → M3U converter.
 Always resolves URLs through create_link to get the real stream URL with play_token.
 """
-import json, hashlib, re, time, urllib.request, urllib.parse, sys
+import json, hashlib, re, time, urllib.request, urllib.parse, sys, threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def mac_to_serial(mac):
     return hashlib.md5(mac.replace(":", "").upper().encode()).hexdigest()[:13].upper()
@@ -110,15 +111,32 @@ def is_channel_ref(cmd):
         return True
     return True
 
+def resolve_channel(raw_cmd, base, mac, token):
+    stream = ""
+    if is_channel_ref(raw_cmd):
+        stream = create_link(base, mac, token, raw_cmd)
+    if not stream:
+        m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+)', raw_cmd.strip())
+        if m:
+            stream = m.group(1)
+        elif raw_cmd.strip().startswith(("http://", "https://", "rtsp://")):
+            stream = raw_cmd.strip()
+    if stream:
+        stream = fix_localhost(stream, base)
+    if stream and token and "token=" not in stream.lower():
+        sep = "&" if "?" in stream else "?"
+        stream = f"{stream}{sep}token={token}"
+    return stream
+
 def main(portal, mac, types, max_pages=5):
     base = portal.rstrip("/")
-    print(f"Handshaking...", file=sys.stderr)
+    print("Handshaking...", file=sys.stderr)
     token = handshake(base, mac)
     print(f"Token: {token[:16]}...", file=sys.stderr)
 
-    print("#EXTM3U")
+    all_channels = []
     for media_type in types:
-        print(f"\n# Fetching {media_type}...", file=sys.stderr)
+        print(f"Fetching {media_type}...", file=sys.stderr)
         genres = fetch_genres(base, mac, token, media_type)
         seen = set()
         for page in range(1, max_pages + 1):
@@ -130,39 +148,48 @@ def main(portal, mac, types, max_pages=5):
                 if cid in seen:
                     continue
                 seen.add(cid)
-                raw_cmd = ch.get("cmd") or ""
-                stream = ""
-                if is_channel_ref(raw_cmd):
-                    stream = create_link(base, mac, token, raw_cmd)
-                if not stream:
-                    m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+)', raw_cmd.strip())
-                    if m:
-                        stream = m.group(1)
-                    elif raw_cmd.strip().startswith(("http://", "https://", "rtsp://")):
-                        stream = raw_cmd.strip()
-                if stream:
-                    stream = fix_localhost(stream, base)
-                if stream and token and "token=" not in stream.lower():
-                    sep = "&" if "?" in stream else "?"
-                    stream = f"{stream}{sep}token={token}"
+                ch["_media_type"] = media_type
+                ch["_group"] = genres.get(str(ch.get("tv_genre_id") or ch.get("category_id") or ""), "Uncategorized")
+                all_channels.append(ch)
 
-                name = (ch.get("name") or ch.get("title") or "Unknown").strip()
-                logo = ch.get("logo") or ch.get("screenshot_uri") or ""
-                genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
-                group = genres.get(genre_id, "Uncategorized")
-                number = ch.get("number") or ch.get("ch_number") or ""
+    print(f"Resolving {len(all_channels)} stream URLs in parallel...", file=sys.stderr)
+    results = {}
+    lock = threading.Lock()
 
-                attrs = f'tvg-name="{name}"'
-                if logo:
-                    attrs += f' tvg-logo="{logo}"'
-                attrs += f' group-title="{group}"'
-                if number:
-                    attrs += f' tvg-chno="{number}"'
+    def resolve(ch):
+        cid = str(ch.get("id", "") or ch.get("cmd", ""))
+        url = resolve_channel(ch.get("cmd") or "", base, mac, token)
+        with lock:
+            results[cid] = url
 
-                url = stream or raw_cmd or ""
-                if url:
-                    print(f'#EXTINF:-1 {attrs},{name}')
-                    print(url)
+    with ThreadPoolExecutor(max_workers=30) as pool:
+        futures = [pool.submit(resolve, ch) for ch in all_channels]
+        for i, f in enumerate(as_completed(futures)):
+            f.result()
+            if (i + 1) % 10 == 0:
+                n = min(i + 1, len(all_channels))
+                print(f"  {n}/{len(all_channels)} resolved...", file=sys.stderr)
+
+    print("#EXTM3U")
+    for ch in all_channels:
+        cid = str(ch.get("id", "") or ch.get("cmd", ""))
+        stream = results.get(cid, "")
+        name = (ch.get("name") or ch.get("title") or "Unknown").strip()
+        logo = ch.get("logo") or ch.get("screenshot_uri") or ""
+        group = ch.get("_group", "Uncategorized")
+        number = ch.get("number") or ch.get("ch_number") or ""
+
+        attrs = f'tvg-name="{name}"'
+        if logo:
+            attrs += f' tvg-logo="{logo}"'
+        attrs += f' group-title="{group}"'
+        if number:
+            attrs += f' tvg-chno="{number}"'
+
+        url = stream or ch.get("cmd", "") or ""
+        if url:
+            print(f'#EXTINF:-1 {attrs},{name}')
+            print(url)
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

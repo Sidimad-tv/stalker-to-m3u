@@ -29,8 +29,9 @@ NDJSON event types (format=json)
 """
 
 from http.server import BaseHTTPRequestHandler
-import json, hashlib, re, time
+import json, hashlib, re, time, threading
 import urllib.request, urllib.parse, urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 
 
@@ -237,25 +238,30 @@ def is_channel_ref(cmd):
         return True
     return True
 
-def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback_number):
-    """Normalize one raw portal channel dict into our schema.
-    Returns None if the channel should be skipped (already in known_urls).
-    """
-    genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
-    raw_cmd  = ch.get("cmd") or ""
-
+def resolve_stream_url(raw_cmd, media_type, base, mac, token):
     stream = ""
     if is_channel_ref(raw_cmd):
         stream = create_link(base, mac, token, raw_cmd, media_type)
     if not stream:
         stream = clean_cmd(raw_cmd, base)
-
-    # Final safety net: fix localhost and append auth token if still missing
     if stream and base:
         stream = fix_localhost_url(stream, base)
     if stream and token and "token=" not in stream.lower():
         sep = "&" if "?" in stream else "?"
         stream = f"{stream}{sep}token={token}"
+    return stream
+
+def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback_number, stream_url=None):
+    """Normalize one raw portal channel dict into our schema.
+    If stream_url is provided, use it directly (skip URL resolution).
+    Returns None if the channel should be skipped (already in known_urls).
+    """
+    genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
+    raw_cmd  = ch.get("cmd") or ""
+
+    stream = stream_url
+    if stream is None:
+        stream = resolve_stream_url(raw_cmd, media_type, base, mac, token)
 
     if stream and stream in known_urls:
         return None
@@ -275,9 +281,8 @@ def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback
 
 def fetch_all(base, mac, token, media_type, max_pages=50, known_urls=None):
     """Buffered fetch — used by format=m3u path."""
-    genres     = fetch_genres(base, mac, token, media_type)
-    channels, seen, total = [], set(), None
-    known_urls = known_urls or set()
+    genres = fetch_genres(base, mac, token, media_type)
+    raw_channels, seen, total = [], set(), None
 
     for page in range(1, max_pages + 1):
         try:
@@ -293,11 +298,25 @@ def fetch_all(base, mac, token, media_type, max_pages=50, known_urls=None):
             if cid in seen:
                 continue
             seen.add(cid)
-            built = build_channel(ch, genres, media_type, base, mac, token, known_urls, len(channels) + 1)
-            if built:
-                channels.append(built)
-        if total and len(channels) >= total:
+            raw_channels.append(ch)
+        if total and len(raw_channels) >= total:
             break
+
+    with ThreadPoolExecutor(max_workers=30) as pool:
+        resolved = list(pool.map(lambda ch: resolve_stream_url(
+            ch.get("cmd", ""), media_type, base, mac, token), raw_channels))
+
+    known_urls = known_urls or set()
+    channels = []
+    for i, ch in enumerate(raw_channels):
+        built = build_channel(ch, genres, media_type, base, mac, token,
+                              known_urls, len(channels) + 1, stream_url=resolved[i])
+        if built and built.get("stream_url"):
+            if built["stream_url"] not in known_urls:
+                known_urls.add(built["stream_url"])
+                channels.append(built)
+        elif built:
+            channels.append(built)
 
     return channels
 

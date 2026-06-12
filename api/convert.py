@@ -195,9 +195,10 @@ def fetch_page(base, mac, token, media_type, page):
     total = int(js.get("total_items") or js.get("total") or 0)
     return data, total
 
-def create_link(base, mac, token, cmd):
+def create_link(base, mac, token, cmd, media_type="live"):
     try:
-        url = portal_url(base, "create_link", type="itv",
+        t = {"live": "itv", "vod": "vod", "series": "series"}.get(media_type, "itv")
+        url = portal_url(base, "create_link", type=t,
                          cmd=urllib.parse.quote(cmd, safe=""),
                          JsHttpRequest=f"{int(time.time() * 1000)}-xml")
         raw = http_get(url, build_headers(mac, token)).get("js", {}).get("cmd", "")
@@ -217,18 +218,17 @@ def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback
     """
     genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
     raw_cmd  = ch.get("cmd") or ""
-    stream   = clean_cmd(raw_cmd, base)
 
-    # If clean_cmd returned a non-URL (e.g. channel ID), resolve via create_link
-    if stream and not re.match(r'^[a-zA-Z]+://|^/', stream):
-        if media_type == "live":
-            stream = create_link(base, mac, token, raw_cmd)
-        else:
-            stream = ""
-    elif not stream and raw_cmd and media_type == "live":
-        stream = create_link(base, mac, token, raw_cmd)
+    # Resolve stream URL: always use create_link for live/VOD/series,
+    # since the cmd field is never a direct playable URL.
+    # create_link returns the real URL with play_token embedded.
+    stream = create_link(base, mac, token, raw_cmd, media_type)
+    if not stream:
+        stream = clean_cmd(raw_cmd, base)
 
-    # Append auth token to all stream URLs
+    # Final safety net: fix localhost and append auth token if still missing
+    if stream and base:
+        stream = fix_localhost_url(stream, base)
     if stream and token and "token=" not in stream.lower():
         sep = "&" if "?" in stream else "?"
         stream = f"{stream}{sep}token={token}"

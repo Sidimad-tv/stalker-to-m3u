@@ -23,7 +23,7 @@ STREAM_TYPE_MAP = {
     '/stream': 'audio', '/radio/': 'audio',
 }
 
-UNCHECKABLE_KEYWORDS = ['token', 'auth', 'login', 'key', 'signature', 'drm']
+UNCHECKABLE_KEYWORDS = ['auth', 'login', 'key', 'signature', 'drm']
 
 
 def classify_stream_type(url: str) -> str:
@@ -50,6 +50,8 @@ def is_uncheckable(url: str) -> bool:
     if len(url) > 250:
         return True
     low = url.lower()
+    if 'play_token' in low:
+        return False
     return any(kw in low for kw in UNCHECKABLE_KEYWORDS)
 
 

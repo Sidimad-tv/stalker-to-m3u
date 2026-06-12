@@ -14,7 +14,7 @@ Exports:
 
 UNCHECKABLE_URL_LENGTH_THRESHOLD = 250
 
-UNCHECKABLE_KEYWORDS = ['token', 'auth', 'login', 'key', 'signature', 'drm']
+UNCHECKABLE_KEYWORDS = ['auth', 'login', 'key', 'signature', 'drm']
 
 STREAM_TYPE_MAP = {
     '.m3u8': 'video', '.m3u': 'video', '.ts': 'video', '.mp4': 'video',
@@ -71,6 +71,8 @@ def is_uncheckable(url: str) -> tuple:
     if len(url) > UNCHECKABLE_URL_LENGTH_THRESHOLD:
         return True, 'URL too long (likely token-signed)'
     low = url.lower()
+    if 'play_token' in low:
+        return False, ''
     for kw in UNCHECKABLE_KEYWORDS:
         if kw in low:
             return True, f'Auth keyword detected: {kw}'

@@ -589,76 +589,84 @@ const $ = id => document.getElementById(id);
 
 // ── Portal history (localStorage) ──────────────────────────────────────────
 const PORTALS_KEY = 'stalker_portals';
-function getSavedPortals(){
-  try{
-    let raw = JSON.parse(localStorage.getItem(PORTALS_KEY))||[];
-    // migrate old string-only entries to {key,portal,mac}
-    let migrated = raw.map(p => typeof p === 'string' ? {key: p+'||', portal: p, mac: ''} : p);
-    if(migrated.some((p,i)=>p!==raw[i]))
-      localStorage.setItem(PORTALS_KEY, JSON.stringify(migrated));
-    return migrated;
-  }catch(e){return []}
+function getSaved(){
+  try{return JSON.parse(localStorage.getItem(PORTALS_KEY))||[]}catch(e){return []}
 }
-function savePortalMac(portal, mac){
+function save(portal, mac){
   portal=portal.replace(/\/+$/,'');
   if(!portal) return;
   const key = portal + '||' + mac;
-  let list=getSavedPortals().filter(p=>p.key!==key);
-  list.unshift({key, portal, mac});
+  let list = getSaved().filter(p => {
+    const [pp, pm] = (typeof p==='string'?p:p.key||'').split('||');
+    return !(pp===portal && pm===mac);
+  });
+  list.unshift(key);
   if(list.length>30) list=list.slice(0,30);
   localStorage.setItem(PORTALS_KEY,JSON.stringify(list));
-  renderPortalList();
+  render();
 }
-function deletePortal(key){
-  let list=getSavedPortals().filter(p=>p.key!==key);
+function del(key){
+  let list = getSaved().filter(p => (typeof p==='string'?p:p.key||'') !== key);
   localStorage.setItem(PORTALS_KEY,JSON.stringify(list));
-  renderPortalList();
+  render();
 }
-function loadPortalMac(portal, mac){
+function load(portal, mac){
   $('portal').value=portal;
   $('mac').value=mac;
   $('portal').dispatchEvent(new Event('input'));
   $('portalHistList').style.display='none';
   $('savedDropdown').classList.remove('open');
-  setTimeout(()=>$('convertBtn').click(), 100);
 }
-function renderPortalList(){
-  const list=getSavedPortals();
-  const dl=$('portalList');
-  dl.innerHTML=list.map(p=>`<option value="${esc(p.portal)}">`).join('');
-  const hl=$('portalHistList');
-  hl.innerHTML=list.length
-    ? list.map(p=>`<div class="ph-item" data-key="${esc(p.key)}" data-portal="${esc(p.portal)}" data-mac="${esc(p.mac)}"><span class="ph-portal">${esc(p.portal)}</span><span class="ph-mac">${esc(p.mac)}</span></div>`).join('')
+function render(){
+  const raw = getSaved();
+  const list = raw.map(p => {
+    const s = typeof p==='string' ? p : (p.key||'');
+    const [portal, mac=''] = s.split('||');
+    return {key:s, portal, mac};
+  });
+  // datalist
+  $('portalList').innerHTML = list.map(p => `<option value="${esc(p.portal)}">`).join('');
+  // portal ▼ dropdown
+  $('portalHistList').innerHTML = list.length
+    ? list.map(p => `<div class="ph-item" data-portal="${esc(p.portal)}" data-mac="${esc(p.mac)}"><span class="ph-portal">${esc(p.portal)}</span><span class="ph-mac">${esc(p.mac||'—')}</span></div>`).join('')
     : '<div style="padding:10px;color:var(--faint);text-align:center">No saved portals yet</div>';
-  const dd=$('savedDropdown');
-  dd.innerHTML=list.length
-    ? list.map(p=>`<div class="ph-item" data-key="${esc(p.key)}" data-portal="${esc(p.portal)}" data-mac="${esc(p.mac)}"><span class="ph-portal">${esc(p.portal)}</span><span class="ph-mac">${esc(p.mac)}</span></div>`).join('')
-    : '<div style="padding:10px;color:var(--faint);text-align:center">No saved portals yet</div>';
+  // 📋 Saved dropdown
+  $('savedDropdown').innerHTML = $('portalHistList').innerHTML;
+  // delete button visibility
+  const v = $('portal').value.replace(/\/+$/,'');
+  $('delPortalBtn').style.display = list.some(p => p.portal===v) ? 'inline-block' : 'none';
 }
+function handlePhClick(e){
+  const item=e.target.closest('.ph-item');
+  if(item) load(item.dataset.portal, item.dataset.mac);
+}
+$('delPortalBtn').addEventListener('click',()=>{
+  const v = $('portal').value.replace(/\/+$/,'');
+  if(v){
+    const raw = getSaved();
+    const key = raw.find(p => {
+      const s = typeof p==='string' ? p : (p.key||'');
+      return s.split('||')[0] === v;
+    });
+    if(key) del(typeof key==='string'?key:key.key);
+  }
+});
 $('portalHistBtn').addEventListener('click',(e)=>{
   e.stopPropagation();
   const hl=$('portalHistList');
-  hl.style.display=hl.style.display==='block'?'none':'block';
+  hl.style.display = hl.style.display==='block'?'none':'block';
 });
 $('savedBtn').addEventListener('click',(e)=>{
   e.stopPropagation();
   $('savedDropdown').classList.toggle('open');
 });
 document.addEventListener('click',(e)=>{
-  if(!e.target.closest('#portalHistList, .saved-wrap'))
-    $('portalHistList').style.display='none';
-  if(!e.target.closest('.saved-wrap'))
-    $('savedDropdown').classList.remove('open');
+  if(!e.target.closest('#portalHistList, .saved-wrap')) $('portalHistList').style.display='none';
+  if(!e.target.closest('.saved-wrap')) $('savedDropdown').classList.remove('open');
 });
-$('portalHistList').addEventListener('click',(e)=>{
-  const item=e.target.closest('.ph-item');
-  if(item) loadPortalMac(item.dataset.portal, item.dataset.mac);
-});
-$('savedDropdown').addEventListener('click',(e)=>{
-  const item=e.target.closest('.ph-item');
-  if(item) loadPortalMac(item.dataset.portal, item.dataset.mac);
-});
-renderPortalList();
+$('portalHistList').addEventListener('click', handlePhClick);
+$('savedDropdown').addEventListener('click', handlePhClick);
+render();
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 function showLog(){ $('logCard').classList.add('visible'); }
@@ -894,7 +902,7 @@ $('convertBtn').addEventListener('click', async () => {
       }
     }
 
-    savePortalMac(portal, mac);
+    save(portal, mac);
     m3uData = buildM3uFromChannels(lastChannels, epg);
     setProgress(100);
     const finalCount = lastChannels.length;

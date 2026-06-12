@@ -198,6 +198,15 @@ def fetch_page(base, mac, token, media_type, page):
 
 def create_link(base, mac, token, cmd, media_type="live"):
     try:
+        # Normalize: extract stream ID from channel reference URLs
+        # e.g. "http://server/ch/2052844_" or "2052844_" -> "2052844"
+        simple = re.match(r'^(\d+)_?$', cmd.strip())
+        if simple:
+            cmd = simple.group(1)
+        else:
+            m = re.search(r'/ch/(\d+)_?', cmd)
+            if m:
+                cmd = m.group(1)
         t = {"live": "itv", "vod": "vod", "series": "series"}.get(media_type, "itv")
         url = portal_url(base, "create_link", type=t,
                          cmd=urllib.parse.quote(cmd, safe=""),

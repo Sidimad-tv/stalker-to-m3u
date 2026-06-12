@@ -39,6 +39,13 @@ def handshake(base, mac):
 
 def create_link(base, mac, token, cmd):
     try:
+        simple = re.match(r'^(\d+)_?$', cmd.strip())
+        if simple:
+            cmd = simple.group(1)
+        else:
+            m = re.search(r'/ch/(\d+)_?', cmd)
+            if m:
+                cmd = m.group(1)
         url = f"{base.rstrip('/')}/portal.php?type=itv&action=create_link&cmd={urllib.parse.quote(cmd, safe='')}&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest={int(time.time() * 1000)}-xml"
         data = http_get(url, build_headers(mac, token))
         raw = data.get("js", {}).get("cmd", "")

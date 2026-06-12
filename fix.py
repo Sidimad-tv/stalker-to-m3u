@@ -107,8 +107,15 @@ def main(portal, mac, types, max_pages=5):
                     continue
                 seen.add(cid)
                 raw_cmd = ch.get("cmd") or ""
-                # Always resolve through create_link
+                # Resolve through create_link (standard Stalker API)
                 stream = create_link(base, mac, token, raw_cmd)
+                if not stream:
+                    # Fallback: try extracting URL directly from cmd
+                    m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+)', raw_cmd.strip())
+                    if m:
+                        stream = m.group(1)
+                    elif raw_cmd.strip().startswith(("http://", "https://", "rtsp://")):
+                        stream = raw_cmd.strip()
                 if stream:
                     stream = fix_localhost(stream, base)
 

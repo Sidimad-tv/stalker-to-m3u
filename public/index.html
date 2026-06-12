@@ -62,9 +62,15 @@ input[type=range]{flex:1;accent-color:var(--primary);height:4px;cursor:pointer}
 #recheckArea .hint{font-size:11px;color:var(--faint);margin-top:4px}
 
 /* portal history list */
-.ph-item{padding:8px 12px;cursor:pointer;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;border-bottom:1px solid var(--border);transition:background .1s}
+.ph-item{padding:8px 12px;cursor:pointer;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;border-bottom:1px solid var(--border);transition:background .1s;display:flex;justify-content:space-between;gap:8px}
 .ph-item:last-child{border-bottom:none}
 .ph-item:hover{background:var(--primary-dim);color:var(--primary)}
+.ph-portal{flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ph-mac{flex-shrink:0;color:var(--muted);font-size:11px}
+.saved-wrap{position:relative}
+.saved-dropdown{display:none;position:absolute;top:100%;left:0;margin-top:4px;width:380px;max-height:240px;overflow-y:auto;background:var(--entry);border:1px solid var(--border);border-radius:8px;z-index:100;box-shadow:var(--shadow)}
+.saved-dropdown.open{display:block}
+.saved-dropdown .ph-item{padding:7px 10px;font-size:11px}
 
 /* buttons */
 .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}
@@ -335,6 +341,10 @@ tr:hover td{background:var(--surf2)}
   <button class="btn btn-ghost" id="cancelBtn" disabled>Cancel</button>
   <button class="btn btn-validate" id="validateBtn" disabled title="Check which streams are alive">🔍&nbsp; Validate Streams</button>
   <button class="btn btn-player" id="openPlayerBtn" disabled title="Open web player">▶ Player</button>
+  <div class="saved-wrap">
+    <button class="btn btn-ghost" id="savedBtn" title="Quick-load a saved portal">📋 Saved</button>
+    <div id="savedDropdown" class="saved-dropdown"></div>
+  </div>
   <button class="btn btn-ghost btn-icon ml-auto" id="copyBtn" disabled title="Copy M3U">&#x2398;</button>
   <button class="btn btn-primary" id="saveBtn" disabled>💾&nbsp; Save .m3u</button>
 </div>
@@ -582,60 +592,64 @@ const PORTALS_KEY = 'stalker_portals';
 function getSavedPortals(){
   try{return JSON.parse(localStorage.getItem(PORTALS_KEY))||[]}catch(e){return []}
 }
-function savePortal(url){
-  url=url.replace(/\/+$/,'');
-  if(!url) return;
-  let list=getSavedPortals().filter(p=>p!==url);
-  list.unshift(url);
+function savePortalMac(portal, mac){
+  portal=portal.replace(/\/+$/,'');
+  if(!portal) return;
+  const key = portal + '||' + mac;
+  let list=getSavedPortals().filter(p=>p.key!==key);
+  list.unshift({key, portal, mac});
   if(list.length>30) list=list.slice(0,30);
   localStorage.setItem(PORTALS_KEY,JSON.stringify(list));
   renderPortalList();
 }
-function deletePortal(url){
-  let list=getSavedPortals().filter(p=>p!==url);
+function deletePortal(key){
+  let list=getSavedPortals().filter(p=>p.key!==key);
   localStorage.setItem(PORTALS_KEY,JSON.stringify(list));
   renderPortalList();
-  const input=$('portal');
-  if(input.value.replace(/\/+$/,'')===url) input.value='';
-  $('delPortalBtn').style.display='none';
+}
+function loadPortalMac(portal, mac){
+  $('portal').value=portal;
+  $('mac').value=mac;
+  $('portal').dispatchEvent(new Event('input'));
+  $('portalHistList').style.display='none';
+  $('savedDropdown').classList.remove('open');
+  setTimeout(()=>$('convertBtn').click(), 100);
 }
 function renderPortalList(){
   const list=getSavedPortals();
   const dl=$('portalList');
-  dl.innerHTML=list.map(p=>`<option value="${esc(p)}">`).join('');
+  dl.innerHTML=list.map(p=>`<option value="${esc(p.portal)}">`).join('');
   const hl=$('portalHistList');
   hl.innerHTML=list.length
-    ? list.map(p=>`<div class="ph-item" data-url="${esc(p)}">${esc(p)}</div>`).join('')
+    ? list.map(p=>`<div class="ph-item" data-key="${esc(p.key)}" data-portal="${esc(p.portal)}" data-mac="${esc(p.mac)}"><span class="ph-portal">${esc(p.portal)}</span><span class="ph-mac">${esc(p.mac)}</span></div>`).join('')
     : '<div style="padding:10px;color:var(--faint);text-align:center">No saved portals yet</div>';
-  const input=$('portal');
-  const delBtn=$('delPortalBtn');
-  const oldHandler = input._inputHandler;
-  if(oldHandler) input.removeEventListener('input',oldHandler);
-  const handler = ()=>{
-    const v=input.value.replace(/\/+$/,'');
-    delBtn.style.display=list.includes(v)?'inline-block':'none';
-  };
-  input._inputHandler = handler;
-  input.addEventListener('input',handler);
+  const dd=$('savedDropdown');
+  dd.innerHTML=list.length
+    ? list.map(p=>`<div class="ph-item" data-key="${esc(p.key)}" data-portal="${esc(p.portal)}" data-mac="${esc(p.mac)}"><span class="ph-portal">${esc(p.portal)}</span><span class="ph-mac">${esc(p.mac)}</span></div>`).join('')
+    : '<div style="padding:10px;color:var(--faint);text-align:center">No saved portals yet</div>';
 }
-$('delPortalBtn').addEventListener('click',()=>{
-  const v=$('portal').value.replace(/\/+$/,'');
-  if(v) deletePortal(v);
-});
 $('portalHistBtn').addEventListener('click',(e)=>{
   e.stopPropagation();
   const hl=$('portalHistList');
   hl.style.display=hl.style.display==='block'?'none':'block';
 });
-document.addEventListener('click',()=>{
-  $('portalHistList').style.display='none';
+$('savedBtn').addEventListener('click',(e)=>{
+  e.stopPropagation();
+  $('savedDropdown').classList.toggle('open');
+});
+document.addEventListener('click',(e)=>{
+  if(!e.target.closest('#portalHistList, .saved-wrap'))
+    $('portalHistList').style.display='none';
+  if(!e.target.closest('.saved-wrap'))
+    $('savedDropdown').classList.remove('open');
 });
 $('portalHistList').addEventListener('click',(e)=>{
   const item=e.target.closest('.ph-item');
-  if(!item) return;
-  $('portal').value=item.dataset.url;
-  $('portalHistList').style.display='none';
-  $('portal').dispatchEvent(new Event('input'));
+  if(item) loadPortalMac(item.dataset.portal, item.dataset.mac);
+});
+$('savedDropdown').addEventListener('click',(e)=>{
+  const item=e.target.closest('.ph-item');
+  if(item) loadPortalMac(item.dataset.portal, item.dataset.mac);
 });
 renderPortalList();
 
@@ -873,7 +887,7 @@ $('convertBtn').addEventListener('click', async () => {
       }
     }
 
-    savePortal(portal);
+    savePortalMac(portal, mac);
     m3uData = buildM3uFromChannels(lastChannels, epg);
     setProgress(100);
     const finalCount = lastChannels.length;

@@ -125,8 +125,11 @@ def build_headers(mac, token=""):
     return h
 
 def portal_url(base, action, **params):
+    base = base.rstrip('/')
     params["action"] = action
-    return f"{base.rstrip('/')}/portal.php?{urlencode(params)}"
+    if base.endswith('.php'):
+        return f"{base}?{urlencode(params)}"
+    return f"{base}/portal.php?{urlencode(params)}"
 
 def http_get(url, headers, timeout=20):
     req = urllib.request.Request(url, headers=headers)
@@ -134,6 +137,7 @@ def http_get(url, headers, timeout=20):
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 def handshake(base, mac):
+    """Perform Stalker handshake at the given resolved base URL."""
     data = http_get(portal_url(base, "handshake", type="stb", prehash=0), build_headers(mac))
     token = data.get("js", {}).get("token") or data.get("token")
     if not token:
@@ -369,6 +373,68 @@ def build_m3u(channels, epg_url="", base=""):
     return "\n".join(lines) + "\n"
 
 
+# ── Portal path auto-detection ─────────────────────────────────────────────
+
+_STUB_PATHS = {'/c', '/stalker_portal', '/server', '/api', '/portal'}
+_PATH_CANDIDATES = [
+    '/portal.php', '/c/portal.php', '/stalker_portal/c/portal.php',
+    '/server/load.php', '/c/', '/stalker_portal/server/load.php', '/api/',
+]
+
+def _build_handshake_url(origin, path, mac):
+    return f"{origin}{path}?type=stb&prehash=0&action=handshake"
+
+def _probe_path(origin, path, mac):
+    try:
+        url = _build_handshake_url(origin, path, mac)
+        req = urllib.request.Request(url, headers=build_headers(mac))
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            ct  = resp.headers.get('Content-Type', '').lower()
+            raw = resp.read()
+        if raw.lstrip()[:9].lower().startswith(b'<!doctype') or raw.lstrip()[:5].lower().startswith(b'<html'):
+            return False
+        if 'html' in ct:
+            return False
+        data  = json.loads(raw)
+        token = (data.get('js') or {}).get('token') or data.get('token')
+        return bool(token)
+    except Exception:
+        return False
+
+def resolve_portal_base(raw_base, mac):
+    """Auto-detect the correct portal path. First tries the simple base+portal.php,
+    then probes common paths as fallback."""
+    # First try: direct /portal.php (covers most portals)
+    try:
+        url = f"{raw_base.rstrip('/')}/portal.php?type=stb&prehash=0&action=handshake"
+        req = urllib.request.Request(url, headers=build_headers(mac))
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read()
+        if not raw.lstrip()[:9].lower().startswith(b'<!doctype') and not raw.lstrip()[:5].lower().startswith(b'<html'):
+            data = json.loads(raw)
+            token = (data.get('js') or {}).get('token') or data.get('token')
+            if token:
+                return raw_base.rstrip('/')
+    except Exception:
+        pass
+
+    # Fallback: probe common paths
+    parsed = urllib.parse.urlparse(raw_base)
+    origin = f'{parsed.scheme}://{parsed.netloc}'
+    for path in _PATH_CANDIDATES:
+        if _probe_path(origin, path, mac):
+            if path.rstrip('/').split('/')[-1].endswith('.php'):
+                return (origin + path.rstrip('/')).rstrip('/')
+            parts    = path.rstrip('/').split('/')
+            last     = parts[-1]
+            dir_path = '/'.join(parts[:-1]) if last.endswith('.php') else path.rstrip('/')
+            return (origin + dir_path).rstrip('/')
+    raise RuntimeError(
+        f'Portal did not respond to any known path. '
+        f'Tried: {", ".join(_PATH_CANDIDATES)}.'
+    )
+
+
 # ── Vercel handler ─────────────────────────────────────────────────────────────
 
 class handler(BaseHTTPRequestHandler):
@@ -452,13 +518,19 @@ class handler(BaseHTTPRequestHandler):
         known_urls = extract_known_urls(skip_known)
 
         try:
-            token = handshake(portal, mac)
+            # Auto-detect portal path (handles /c/, /stalker_portal/, /server/load.php)
+            resolved_base = resolve_portal_base(portal, mac)
+        except Exception as e:
+            return self.send_json(502, {"error": f"Portal path detection failed: {e}"})
+
+        try:
+            token = handshake(resolved_base, mac)
         except Exception as e:
             return self.send_json(502, {"error": f"Handshake failed: {e}"})
 
         profile = {}
         try:
-            profile = get_profile(portal, mac, token)
+            profile = get_profile(resolved_base, mac, token)
         except Exception:
             pass
 
@@ -467,12 +539,12 @@ class handler(BaseHTTPRequestHandler):
             all_channels, errors = [], []
             for t in types:
                 try:
-                    all_channels.extend(fetch_all(portal, mac, token, t, max_pgs, known_urls))
+                    all_channels.extend(fetch_all(resolved_base, mac, token, t, max_pgs, known_urls))
                 except Exception as e:
                     errors.append(f"{t}: {e}")
             if not all_channels and errors:
                 return self.send_json(502, {"error": "No channels fetched", "details": errors})
-            return self.send_m3u(build_m3u(all_channels, epg_url, portal), portal)
+            return self.send_m3u(build_m3u(all_channels, epg_url, resolved_base), resolved_base)
 
         # ── format=json  (NDJSON streaming) ───────────────────────────────────
         self.start_ndjson()
@@ -492,13 +564,13 @@ class handler(BaseHTTPRequestHandler):
         estimated_total = max(len(types) * max_pgs * 20, 20)
 
         for media_type in types:
-            genres    = fetch_genres(portal, mac, token, media_type)
+            genres    = fetch_genres(resolved_base, mac, token, media_type)
             seen      = set()
             type_sent = 0
 
             for page in range(1, max_pgs + 1):
                 try:
-                    items, total_items = fetch_page(portal, mac, token, media_type, page)
+                    items, total_items = fetch_page(resolved_base, mac, token, media_type, page)
                 except Exception as e:
                     err_msg = str(e)
                     errors.append(f"{media_type} p{page}: {err_msg}")
@@ -519,7 +591,7 @@ class handler(BaseHTTPRequestHandler):
                         continue
                     seen.add(cid)
                     built = build_channel(ch, genres, media_type,
-                                          portal, mac, token, known_urls, sent + 1)
+                                          resolved_base, mac, token, known_urls, sent + 1)
                     if not built:
                         continue
                     sent      += 1

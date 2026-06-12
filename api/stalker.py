@@ -242,11 +242,15 @@ def resolve_portal_base(raw_base: str, mac: str) -> str:
     tried = []
     for path in _PATH_CANDIDATES:
         if _probe_path(origin, path, mac):
-            # Resolved base = origin + directory portion of the working path
-            parts    = path.rstrip('/').split('/')
-            last     = parts[-1]
-            dir_path = '/'.join(parts[:-1]) if last.endswith('.php') else path.rstrip('/')
-            resolved = (origin + dir_path).rstrip('/')
+            # If path ends with .php (e.g. /server/load.php) keep it as the script
+            if path.rstrip('/').split('/')[-1].endswith('.php'):
+                resolved = (origin + path.rstrip('/')).rstrip('/')
+            else:
+                # Directory-only path — strip trailing stub/script name
+                parts    = path.rstrip('/').split('/')
+                last     = parts[-1]
+                dir_path = '/'.join(parts[:-1]) if last.endswith('.php') else path.rstrip('/')
+                resolved = (origin + dir_path).rstrip('/')
             _resolved_bases[raw_base] = resolved
             return resolved
         tried.append(path)

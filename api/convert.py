@@ -82,10 +82,13 @@ def fix_localhost_url(url: str, base: str) -> str:
 
 
 def is_uncheckable(url: str) -> bool:
-    UNCHECKABLE_KEYWORDS = ['token', 'auth', 'login', 'key', 'signature', 'drm']
     if len(url) > 250:
         return True
     low = url.lower()
+    # play_token means the stream has self-contained auth, NOT external required
+    if 'play_token' in low:
+        return False
+    UNCHECKABLE_KEYWORDS = ['auth', 'login', 'key', 'signature', 'drm']
     return any(kw in low for kw in UNCHECKABLE_KEYWORDS)
 
 
@@ -311,7 +314,7 @@ def fetch_all(base, mac, token, media_type, max_pages=50, known_urls=None):
         if total and len(raw_channels) >= total:
             break
 
-    with ThreadPoolExecutor(max_workers=30) as pool:
+    with ThreadPoolExecutor(max_workers=40) as pool:
         resolved = list(pool.map(lambda ch: resolve_stream_url(
             ch.get("cmd", ""), media_type, base, mac, token), raw_channels))
 

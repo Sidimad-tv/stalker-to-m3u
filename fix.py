@@ -39,14 +39,19 @@ def handshake(base, mac):
 
 def create_link(base, mac, token, cmd):
     try:
+        stream_id = ""
         simple = re.match(r'^(\d+)_?$', cmd.strip())
         if simple:
-            cmd = simple.group(1)
+            stream_id = simple.group(1)
         else:
             m = re.search(r'/ch/(\d+)_?', cmd)
             if m:
-                cmd = m.group(1)
-        url = f"{base.rstrip('/')}/portal.php?type=itv&action=create_link&cmd={urllib.parse.quote(cmd, safe='')}&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest={int(time.time() * 1000)}-xml"
+                stream_id = m.group(1)
+        q = urllib.parse.quote(stream_id or cmd, safe='')
+        url = f"{base.rstrip('/')}/portal.php?type=itv&action=create_link&cmd={q}"
+        if stream_id:
+            url += f"&stream={stream_id}"
+        url += f"&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest={int(time.time() * 1000)}-xml"
         data = http_get(url, build_headers(mac, token))
         raw = data.get("js", {}).get("cmd", "")
         if not raw:
@@ -56,11 +61,9 @@ def create_link(base, mac, token, cmd):
             link = m.group(1)
         else:
             link = raw.strip()
-        if re.search(r'stream=(?:&|$)', link):
-            m2 = re.search(r'(\d+)', cmd)
-            if m2:
-                link = re.sub(r'stream=(?:&|$)', f'stream={m2.group(1)}&', link)
-                link = link.rstrip('&')
+        if re.search(r'stream=(?:&|$)', link) and stream_id:
+            link = re.sub(r'stream=(?:&|$)', f'stream={stream_id}&', link)
+            link = link.rstrip('&')
         return link
     except Exception:
         return ""

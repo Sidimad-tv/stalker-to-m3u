@@ -201,27 +201,26 @@ def fetch_page(base, mac, token, media_type, page):
 
 def create_link(base, mac, token, cmd, media_type="live"):
     try:
-        # Normalize: extract stream ID from channel reference URLs
-        # e.g. "http://server/ch/2052844_" or "2052844_" -> "2052844"
+        stream_id = ""
         simple = re.match(r'^(\d+)_?$', cmd.strip())
         if simple:
-            cmd = simple.group(1)
+            stream_id = simple.group(1)
         else:
             m = re.search(r'/ch/(\d+)_?', cmd)
             if m:
-                cmd = m.group(1)
+                stream_id = m.group(1)
         t = {"live": "itv", "vod": "vod", "series": "series"}.get(media_type, "itv")
-        url = portal_url(base, "create_link", type=t,
-                         cmd=urllib.parse.quote(cmd, safe=""),
-                         JsHttpRequest=f"{int(time.time() * 1000)}-xml")
+        params = {"type": t, "cmd": urllib.parse.quote(stream_id or cmd, safe=""),
+                  "JsHttpRequest": f"{int(time.time() * 1000)}-xml"}
+        if stream_id:
+            params["stream"] = stream_id
+        url = portal_url(base, "create_link", **params)
         raw = http_get(url, build_headers(mac, token)).get("js", {}).get("cmd", "")
         link = clean_cmd(raw, base)
         if link:
-            if re.search(r'stream=(?:&|$)', link):
-                m = re.search(r'(\d+)', cmd)
-                if m:
-                    link = re.sub(r'stream=(?:&|$)', f'stream={m.group(1)}&', link)
-                    link = link.rstrip('&')
+            if re.search(r'stream=(?:&|$)', link) and stream_id:
+                link = re.sub(r'stream=(?:&|$)', f'stream={stream_id}&', link)
+                link = link.rstrip('&')
             if token and "token=" not in link.lower():
                 separator = "&" if "?" in link else "?"
                 link = f"{link}{separator}token={token}"
@@ -296,23 +295,24 @@ def fetch_all(base, mac, token, media_type, max_pages=50, known_urls=None):
     genres = fetch_genres(base, mac, token, media_type)
     raw_channels, seen, total = [], set(), None
 
-    for page in range(1, max_pages + 1):
+    def fetch_one(p):
         try:
-            items, total_items = fetch_page(base, mac, token, media_type, page)
+            it, ti = fetch_page(base, mac, token, media_type, p)
+            return it or [], ti
         except Exception:
-            break
-        if total is None and total_items:
-            total = total_items
-        if not items:
-            break
-        for ch in items:
-            cid = str(ch.get("id", "") or ch.get("cmd", ""))
-            if cid in seen:
-                continue
-            seen.add(cid)
-            raw_channels.append(ch)
-        if total and len(raw_channels) >= total:
-            break
+            return [], 0
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for items, total_items in pool.map(fetch_one, range(1, max_pages + 1)):
+            if total is None and total_items:
+                total = total_items
+            for ch in items:
+                cid = str(ch.get("id", "") or ch.get("cmd", ""))
+                if cid not in seen:
+                    seen.add(cid)
+                    raw_channels.append(ch)
+            if total and len(raw_channels) >= total:
+                break
 
     with ThreadPoolExecutor(max_workers=40) as pool:
         resolved = list(pool.map(lambda ch: resolve_stream_url(

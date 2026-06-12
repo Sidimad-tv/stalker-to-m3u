@@ -321,8 +321,8 @@ tr:hover td{background:var(--surf2)}
     <label>Max Pages per type &mdash; <span id="pagesVal" style="color:var(--primary);font-family:'JetBrains Mono',monospace">50</span></label>
     <div class="range-row">
       <span style="font-size:12px;color:var(--faint)">1</span>
-      <input type="range" id="pages" min="1" max="500" value="50">
-      <span style="font-size:12px;color:var(--faint)">500</span>
+      <input type="range" id="pages" min="1" max="100" value="50">
+      <span style="font-size:12px;color:var(--faint)">100</span>
     </div>
   </div>
   <div class="recheck-toggle">
@@ -612,7 +612,7 @@ function del(key){
 }
 function load(portal, mac){
   $('portal').value=portal;
-  $('mac').value=mac;
+  if(mac) $('mac').value=mac;
   $('portal').dispatchEvent(new Event('input'));
   $('portalHistList').style.display='none';
   $('savedDropdown').classList.remove('open');
@@ -1306,28 +1306,38 @@ function loadStream(url, name='', group='', logo=''){
   // Auto-detect override only when engine is 'hls' and stream is DASH or vice versa
   if(engine === 'hls' && isDash && !isHls) engine = 'dash';
   if(engine === 'dash' && isHls && !isDash) engine = 'hls';
+  // Non-HLS/non-DASH raw TS streams — use native
+  if(!isHls && !isDash) engine = 'native';
 
   if(engine === 'hls'){
     if(typeof Hls !== 'undefined' && Hls.isSupported()){
-      hlsInstance = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        startLevel: -1,
-      });
-      hlsInstance.loadSource(url);
-      hlsInstance.attachMedia(video);
-      hlsInstance.on(Hls.Events.MANIFEST_PARSED, ()=>{
-        showOverlay('hidden');
-        setPlayerStatus('\u2713 HLS stream loaded','ok');
+      if(isHls){
+        hlsInstance = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          startLevel: -1,
+        });
+        hlsInstance.loadSource(url);
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, ()=>{
+          showOverlay('hidden');
+          setPlayerStatus('\u2713 HLS stream loaded','ok');
+          video.play().catch(()=>{});
+        });
+        hlsInstance.on(Hls.Events.ERROR, (ev, data)=>{
+          if(data.fatal){
+            const msg = `HLS error: ${data.type} / ${data.details}`;
+            showPlayerError(msg);
+            showOverlay('idle');
+          }
+        });
+      } else {
+        // Not HLS — fall back to native
+        video.src = url;
         video.play().catch(()=>{});
-      });
-      hlsInstance.on(Hls.Events.ERROR, (ev, data)=>{
-        if(data.fatal){
-          const msg = `HLS error: ${data.type} / ${data.details}`;
-          showPlayerError(msg);
-          showOverlay('idle');
-        }
-      });
+        showOverlay('hidden');
+        setPlayerStatus('\u2713 Playing','ok');
+      }
     } else if(video.canPlayType('application/vnd.apple.mpegurl')){
       // Safari native HLS
       video.src = url;

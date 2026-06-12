@@ -204,7 +204,11 @@ def create_link(base, mac, token, cmd, media_type="live"):
         raw = http_get(url, build_headers(mac, token)).get("js", {}).get("cmd", "")
         link = clean_cmd(raw, base)
         if link:
-            # Append token as query parameter if not already present
+            if re.search(r'stream=(?:&|$)', link):
+                m = re.search(r'(\d+)', cmd)
+                if m:
+                    link = re.sub(r'stream=(?:&|$)', f'stream={m.group(1)}&', link)
+                    link = link.rstrip('&')
             if token and "token=" not in link.lower():
                 separator = "&" if "?" in link else "?"
                 link = f"{link}{separator}token={token}"

@@ -43,12 +43,18 @@ def create_link(base, mac, token, cmd):
         raw = data.get("js", {}).get("cmd", "")
         if not raw:
             return ""
-        # Strip ffmpeg/auto prefix
         m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+|rtsp://\S+)', raw.strip())
         if m:
-            return m.group(1)
-        return raw.strip()
-    except Exception as e:
+            link = m.group(1)
+        else:
+            link = raw.strip()
+        if re.search(r'stream=(?:&|$)', link):
+            m2 = re.search(r'(\d+)', cmd)
+            if m2:
+                link = re.sub(r'stream=(?:&|$)', f'stream={m2.group(1)}&', link)
+                link = link.rstrip('&')
+        return link
+    except Exception:
         return ""
 
 def fetch_page(base, mac, token, media_type, page):
@@ -118,6 +124,9 @@ def main(portal, mac, types, max_pages=5):
                         stream = raw_cmd.strip()
                 if stream:
                     stream = fix_localhost(stream, base)
+                if stream and token and "token=" not in stream.lower():
+                    sep = "&" if "?" in stream else "?"
+                    stream = f"{stream}{sep}token={token}"
 
                 name = (ch.get("name") or ch.get("title") or "Unknown").strip()
                 logo = ch.get("logo") or ch.get("screenshot_uri") or ""

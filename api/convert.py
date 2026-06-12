@@ -64,15 +64,18 @@ def sanitize_url(url: str) -> str:
 
 
 def fix_localhost_url(url: str, base: str) -> str:
-    """Convert localhost URLs to absolute URLs using the base portal host."""
+    """Convert localhost/loopback URLs to absolute URLs using the base portal host."""
     if not url or not base:
         return url
+    parsed_base = urllib.parse.urlparse(base)
+    host = parsed_base.netloc.split(':')[0]
     if "localhost" in url.lower():
-        parsed_base = urllib.parse.urlparse(base)
-        host = parsed_base.netloc.split(':')[0]
         url = url.replace("localhost", host)
-    elif url.startswith("/"):
-        parsed_base = urllib.parse.urlparse(base)
+    elif "127.0.0.1" in url:
+        url = url.replace("127.0.0.1", host)
+    elif "0.0.0.0" in url:
+        url = url.replace("0.0.0.0", host)
+    if url.startswith("/"):
         url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
     return url
 
@@ -169,12 +172,14 @@ def clean_cmd(cmd, base=""):
     if m:
         url = sanitize_url(m.group(1))
         return fix_localhost_url(url, base) if base else url
-    # Check if cmd contains localhost URL
-    if "localhost" in cmd.lower():
-        m = re.search(r'(https?://localhost[^\s]+)', cmd)
+    # Check if cmd contains localhost/127.0.0.1 URL
+    if re.search(r'(localhost|127\.0\.0\.1|0\.0\.0\.0)', cmd.lower()):
+        m = re.search(r'([a-zA-Z]+://[^\s]+)', cmd)
         if m:
             url = sanitize_url(m.group(1))
             return fix_localhost_url(url, base) if base else url
+    if base:
+        return fix_localhost_url(cmd, base)
     return cmd
 
 def fetch_page(base, mac, token, media_type, page):
@@ -214,8 +219,19 @@ def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback
     raw_cmd  = ch.get("cmd") or ""
     stream   = clean_cmd(raw_cmd, base)
 
-    if not stream and raw_cmd and media_type == "live":
+    # If clean_cmd returned a non-URL (e.g. channel ID), resolve via create_link
+    if stream and not re.match(r'^[a-zA-Z]+://|^/', stream):
+        if media_type == "live":
+            stream = create_link(base, mac, token, raw_cmd)
+        else:
+            stream = ""
+    elif not stream and raw_cmd and media_type == "live":
         stream = create_link(base, mac, token, raw_cmd)
+
+    # Append auth token to all stream URLs
+    if stream and token and "token=" not in stream.lower():
+        sep = "&" if "?" in stream else "?"
+        stream = f"{stream}{sep}token={token}"
 
     if stream and stream in known_urls:
         return None

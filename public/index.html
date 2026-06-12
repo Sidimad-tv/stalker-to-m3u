@@ -590,7 +590,14 @@ const $ = id => document.getElementById(id);
 // ── Portal history (localStorage) ──────────────────────────────────────────
 const PORTALS_KEY = 'stalker_portals';
 function getSavedPortals(){
-  try{return JSON.parse(localStorage.getItem(PORTALS_KEY))||[]}catch(e){return []}
+  try{
+    let raw = JSON.parse(localStorage.getItem(PORTALS_KEY))||[];
+    // migrate old string-only entries to {key,portal,mac}
+    let migrated = raw.map(p => typeof p === 'string' ? {key: p+'||', portal: p, mac: ''} : p);
+    if(migrated.some((p,i)=>p!==raw[i]))
+      localStorage.setItem(PORTALS_KEY, JSON.stringify(migrated));
+    return migrated;
+  }catch(e){return []}
 }
 function savePortalMac(portal, mac){
   portal=portal.replace(/\/+$/,'');

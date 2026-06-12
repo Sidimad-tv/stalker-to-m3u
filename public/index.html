@@ -61,6 +61,11 @@ input[type=range]{flex:1;accent-color:var(--primary);height:4px;cursor:pointer}
 #recheckArea textarea:focus{border-color:var(--primary)}
 #recheckArea .hint{font-size:11px;color:var(--faint);margin-top:4px}
 
+/* portal history list */
+.ph-item{padding:8px 12px;cursor:pointer;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;border-bottom:1px solid var(--border);transition:background .1s}
+.ph-item:last-child{border-bottom:none}
+.ph-item:hover{background:var(--primary-dim);color:var(--primary)}
+
 /* buttons */
 .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}
 .btn{border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s,opacity .15s;font-family:inherit}
@@ -284,8 +289,10 @@ tr:hover td{background:var(--surf2)}
     <label for="portal">Portal URL</label>
     <div style="display:flex;gap:6px;align-items:stretch">
       <input type="url" id="portal" list="portalList" placeholder="http://provider.com:8080" autocomplete="off" spellcheck="false" style="flex:1">
+      <button id="portalHistBtn" type="button" title="Saved portals" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;flex-shrink:0">▼</button>
       <button id="delPortalBtn" type="button" title="Delete selected portal" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--error);cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;display:none">🗑</button>
     </div>
+    <div id="portalHistList" style="display:none;margin-top:6px;border:1px solid var(--border);border-radius:8px;background:var(--entry);max-height:180px;overflow-y:auto;font-size:12px"></div>
     <datalist id="portalList"></datalist>
   </div>
   <div class="field">
@@ -596,16 +603,39 @@ function renderPortalList(){
   const list=getSavedPortals();
   const dl=$('portalList');
   dl.innerHTML=list.map(p=>`<option value="${esc(p)}">`).join('');
+  const hl=$('portalHistList');
+  hl.innerHTML=list.length
+    ? list.map(p=>`<div class="ph-item" data-url="${esc(p)}">${esc(p)}</div>`).join('')
+    : '<div style="padding:10px;color:var(--faint);text-align:center">No saved portals yet</div>';
   const input=$('portal');
   const delBtn=$('delPortalBtn');
-  input.addEventListener('input',()=>{
+  const oldHandler = input._inputHandler;
+  if(oldHandler) input.removeEventListener('input',oldHandler);
+  const handler = ()=>{
     const v=input.value.replace(/\/+$/,'');
     delBtn.style.display=list.includes(v)?'inline-block':'none';
-  },{once:false});
+  };
+  input._inputHandler = handler;
+  input.addEventListener('input',handler);
 }
 $('delPortalBtn').addEventListener('click',()=>{
   const v=$('portal').value.replace(/\/+$/,'');
   if(v) deletePortal(v);
+});
+$('portalHistBtn').addEventListener('click',(e)=>{
+  e.stopPropagation();
+  const hl=$('portalHistList');
+  hl.style.display=hl.style.display==='block'?'none':'block';
+});
+document.addEventListener('click',()=>{
+  $('portalHistList').style.display='none';
+});
+$('portalHistList').addEventListener('click',(e)=>{
+  const item=e.target.closest('.ph-item');
+  if(!item) return;
+  $('portal').value=item.dataset.url;
+  $('portalHistList').style.display='none';
+  $('portal').dispatchEvent(new Event('input'));
 });
 renderPortalList();
 

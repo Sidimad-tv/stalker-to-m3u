@@ -92,6 +92,24 @@ def fix_localhost(url, base):
         url = f"{parsed.scheme}://{parsed.netloc}{url}"
     return url
 
+def is_channel_ref(cmd):
+    if not cmd:
+        return False
+    cmd = cmd.strip()
+    if re.match(r'^\d+_?$', cmd):
+        return True
+    if re.search(r'(localhost|127\.0\.0\.1|0\.0\.0\.0)', cmd.lower()):
+        return True
+    if re.search(r'/ch/\d+_?', cmd):
+        return True
+    if re.search(r'\.(ts|m3u8?|mp4|flv|mkv|avi|mpeg|mp3|aac)(\?|$)', cmd.lower()):
+        return False
+    if re.search(r'/(?:play|stream|live|hls)/', cmd.lower()):
+        return False
+    if not re.match(r'^[a-zA-Z]+://', cmd):
+        return True
+    return True
+
 def main(portal, mac, types, max_pages=5):
     base = portal.rstrip("/")
     print(f"Handshaking...", file=sys.stderr)
@@ -113,10 +131,10 @@ def main(portal, mac, types, max_pages=5):
                     continue
                 seen.add(cid)
                 raw_cmd = ch.get("cmd") or ""
-                # Resolve through create_link (standard Stalker API)
-                stream = create_link(base, mac, token, raw_cmd)
+                stream = ""
+                if is_channel_ref(raw_cmd):
+                    stream = create_link(base, mac, token, raw_cmd)
                 if not stream:
-                    # Fallback: try extracting URL directly from cmd
                     m = re.match(r'^(?:ffmpeg|auto)\s+(https?://\S+)', raw_cmd.strip())
                     if m:
                         stream = m.group(1)

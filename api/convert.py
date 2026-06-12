@@ -216,6 +216,27 @@ def create_link(base, mac, token, cmd, media_type="live"):
     except Exception:
         return ""
 
+def is_channel_ref(cmd):
+    """True if cmd is a channel reference needing create_link API resolution.
+    False if it looks like a direct playable URL (skip the HTTP request).
+    """
+    if not cmd:
+        return False
+    cmd = cmd.strip()
+    if re.match(r'^\d+_?$', cmd):
+        return True
+    if re.search(r'(localhost|127\.0\.0\.1|0\.0\.0\.0)', cmd.lower()):
+        return True
+    if re.search(r'/ch/\d+_?', cmd):
+        return True
+    if re.search(r'\.(ts|m3u8?|mp4|flv|mkv|avi|mpeg|mp3|aac)(\?|$)', cmd.lower()):
+        return False
+    if re.search(r'/(?:play|stream|live|hls)/', cmd.lower()):
+        return False
+    if not re.match(r'^[a-zA-Z]+://', cmd):
+        return True
+    return True
+
 def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback_number):
     """Normalize one raw portal channel dict into our schema.
     Returns None if the channel should be skipped (already in known_urls).
@@ -223,10 +244,9 @@ def build_channel(ch, genres, media_type, base, mac, token, known_urls, fallback
     genre_id = str(ch.get("tv_genre_id") or ch.get("category_id") or "")
     raw_cmd  = ch.get("cmd") or ""
 
-    # Resolve stream URL: always use create_link for live/VOD/series,
-    # since the cmd field is never a direct playable URL.
-    # create_link returns the real URL with play_token embedded.
-    stream = create_link(base, mac, token, raw_cmd, media_type)
+    stream = ""
+    if is_channel_ref(raw_cmd):
+        stream = create_link(base, mac, token, raw_cmd, media_type)
     if not stream:
         stream = clean_cmd(raw_cmd, base)
 
